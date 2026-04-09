@@ -259,4 +259,282 @@ select option{background:var(--s2)}
       <div style="display:flex;justify-content:space-between;margin-top:4px"><span style="color:var(--tx2)">Valor proporcional</span><span id="prev-valor" style="color:var(--gr);font-weight:600">—</span></div>
       <div style="display:flex;justify-content:space-between;margin-top:4px"><span style="color:var(--tx2)">Dia do pagamento</span><span id="prev-dia">—</span></div>
     </div>
-    <div style="display:
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-ghost" style="flex:1" onclick="closeModal('modal-add-func')">Cancelar</button>
+      <button class="btn btn-primary" style="flex:2" id="btn-salvar-func" onclick="salvarFuncionario()">Cadastrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: PAGAMENTO COM VALE -->
+<div class="overlay" id="modal-pagar">
+  <div class="modal"><div class="modal-handle"></div><div id="mp-body"></div></div>
+</div>
+
+<!-- MODAL: QR CODE PIX -->
+<div class="overlay" id="modal-qr">
+  <div class="modal"><div class="modal-handle"></div><div id="qr-body"></div></div>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+
+<script>
+const API = window.location.hostname==='localhost' ? 'http://localhost:3000' : ''
+let alertasData = []
+
+function navigate(page) {
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'))
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'))
+  document.getElementById('page-'+page).classList.add('active')
+  document.querySelector(`[data-page="${page}"]`).classList.add('active')
+  const titles={dashboard:'Dashboard',funcionarios:'Funcionários',historico:'Histórico'}
+  document.getElementById('topbar-title').textContent=titles[page]
+  closeSidebar()
+  if(page==='dashboard') loadDashboard()
+  if(page==='funcionarios') loadFuncionarios()
+  if(page==='historico') loadHistorico()
+}
+function toggleSidebar(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('sbOverlay').classList.toggle('open')}
+function closeSidebar(){document.getElementById('sidebar').classList.remove('open');document.getElementById('sbOverlay').classList.remove('open')}
+async function apiFetch(path,opts={}){
+  const res=await fetch(API+path,{headers:{'Content-Type':'application/json'},...opts})
+  const data=await res.json()
+  if(!res.ok) throw new Error(data.erro||'Erro na requisição')
+  return data
+}
+async function loadDashboard(){
+  document.getElementById('dash-list').innerHTML='<div class="loading"><div class="spin"></div>Carregando...</div>'
+  try{
+    const data=await apiFetch('/api/alertas')
+    alertasData=data.alertas||[]
+    const r=data.resumo
+    const meses=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
+    const [ano,mes]=(data.mes_referencia||'').split('-')
+    document.getElementById('pill-mes').textContent=`${meses[parseInt(mes)-1]} ${ano}`
+    document.getElementById('val-func').textContent=r.total_funcionarios
+    document.getElementById('val-pendente').textContent='R$ '+r.total_pendente.toLocaleString('pt-BR',{minimumFractionDigits:2})
+    document.getElementById('val-hoje').textContent=r.hoje
+    document.getElementById('val-total').textContent='R$ '+r.total_mes.toLocaleString('pt-BR',{minimumFractionDigits:2})
+    document.getElementById('stat-hoje').className='stat '+(r.hoje>0?'alert':'')
+    document.getElementById('val-hoje').className='stat-val '+(r.hoje>0?'alert':'')
+    document.getElementById('stat-pendente').className='stat '+(r.atrasados>0?'danger':r.pendentes>0?'alert':'success')
+    document.getElementById('val-pendente').className='stat-val '+(r.atrasados>0?'danger':r.pendentes>0?'alert':'success')
+    const badge=document.getElementById('badge-alertas')
+    const tot=r.hoje+r.atrasados
+    if(tot>0){badge.style.display='inline-block';badge.textContent=tot}else{badge.style.display='none'}
+    const banner=document.getElementById('alert-banner')
+    if(r.atrasados>0){banner.className='alert-banner critical';document.getElementById('alert-text-content').textContent=`${r.atrasados} pagamento(s) em atraso!`}
+    else if(r.hoje>0){banner.className='alert-banner';document.getElementById('alert-text-content').textContent=`${r.hoje} pagamento(s) vencem hoje!`}
+    else{banner.className='alert-banner hidden'}
+    const list=document.getElementById('dash-list')
+    if(!alertasData.length){list.innerHTML='<div class="empty"><p>Nenhum funcionário cadastrado</p></div>';return}
+    list.innerHTML=alertasData.map(a=>renderFuncCard(a)).join('')
+  }catch(e){
+    document.getElementById('dash-list').innerHTML=`<div class="empty"><p style="color:var(--rd)">Erro: ${e.message}</p></div>`
+    toast('Erro ao carregar dashboard','error')
+  }
+}
+function renderFuncCard(a){
+  const cls=a.pago?'paid':a.tipo==='hoje'?'today':a.tipo==='atrasado'?'atrasado':a.tipo==='proximo'?'proximo':''
+  const tagCls=a.pago?'tag-paid':a.tipo==='hoje'?'tag-today':a.tipo==='atrasado'?'tag-atrasado':a.tipo==='proximo'?'tag-proximo':'tag-pendente'
+  const tagTxt=a.pago?'Pago':a.tipo==='hoje'?'Vence hoje':a.tipo==='atrasado'?`${Math.abs(a.dias_para_vencer)}d atraso`:a.tipo==='proximo'?`${a.dias_para_vencer}d`:`Dia ${a.dia_pagamento}`
+  const cores=['#6C5CE7','#00D49B','#F5A623','#FF5E5E','#a29bfe','#55efc4']
+  const cor=cores[a.nome.charCodeAt(0)%cores.length]
+  const iniciais=a.nome.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase()
+  const valor='R$ '+(a.valor||0).toLocaleString('pt-BR',{minimumFractionDigits:2})
+  return `
+  <div class="func-card ${cls}">
+    <div class="avatar" style="background:${cor}22;color:${cor}">${iniciais}</div>
+    <div class="func-info">
+      <div class="func-name">${a.nome}</div>
+      <div class="func-meta">Pix: ${a.pix_chave} (${a.pix_tipo}) · Dia ${a.dia_pagamento}</div>
+    </div>
+    <div class="func-right">
+      <div class="func-val">${valor}</div>
+      <span class="tag ${tagCls}">${tagTxt}</span>
+    </div>
+    <div class="func-actions">
+      ${!a.pago
+        ?`<button class="btn btn-green btn-sm" onclick="abrirPagamento('${a.funcionario_id}','${a.nome}',${a.valor},'${a.pix_chave}','${a.pix_tipo}')">Pagar Pix</button>`
+        :`<button class="btn btn-ghost btn-sm" onclick="navigate('historico')">Comprovante</button>`}
+    </div>
+  </div>`
+}
+async function loadFuncionarios(){
+  document.getElementById('func-list').innerHTML='<div class="loading"><div class="spin"></div>Carregando...</div>'
+  try{
+    const data=await apiFetch('/api/funcionarios')
+    const list=document.getElementById('func-list')
+    if(!data.length){list.innerHTML='<div class="empty"><p>Nenhum funcionário cadastrado ainda</p></div>';return}
+    list.innerHTML=data.map(f=>{
+      const cores=['#6C5CE7','#00D49B','#F5A623','#FF5E5E','#a29bfe','#55efc4']
+      const cor=cores[f.nome.charCodeAt(0)%cores.length]
+      const iniciais=f.nome.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase()
+      const entrada=new Date(f.data_entrada+'T12:00:00').toLocaleDateString('pt-BR')
+      return `
+      <div class="func-card">
+        <div class="avatar" style="background:${cor}22;color:${cor}">${iniciais}</div>
+        <div class="func-info">
+          <div class="func-name">${f.nome}</div>
+          <div class="func-meta">Entrada: ${entrada} · Pix ${f.pix_tipo}: ${f.pix_chave}</div>
+        </div>
+        <div class="func-right">
+          <div class="func-val">R$ ${Number(f.salario).toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>
+          <span class="tag tag-pendente">Dia ${f.dia_pagamento}</span>
+        </div>
+        <div class="func-actions">
+          <button class="btn btn-danger btn-sm" onclick="deletarFuncionario('${f.id}','${f.nome}')">Remover</button>
+        </div>
+      </div>`
+    }).join('')
+  }catch(e){document.getElementById('func-list').innerHTML=`<div class="empty"><p style="color:var(--rd)">Erro: ${e.message}</p></div>`}
+}
+async function deletarFuncionario(id,nome){
+  if(!confirm(`Remover ${nome}?`)) return
+  try{await apiFetch('/api/funcionarios',{method:'DELETE',body:JSON.stringify({id})});toast(`${nome} removido`,'success');loadFuncionarios()}
+  catch(e){toast(e.message,'error')}
+}
+async function loadHistorico(){
+  document.getElementById('hist-list').innerHTML='<div class="loading"><div class="spin"></div>Carregando...</div>'
+  try{
+    const data=await apiFetch('/api/pagamentos')
+    const list=document.getElementById('hist-list')
+    if(!data.length){list.innerHTML='<div class="empty"><p>Nenhum pagamento realizado ainda</p></div>';return}
+    list.innerHTML=data.map(p=>{
+      const ok=p.mp_status!=='erro'
+      const nome=p.funcionarios?.nome||'—'
+      const dt=new Date(p.criado_em).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})
+      return `
+      <div class="hist-item">
+        <div class="hist-dot ${ok?'ok':'erro'}"></div>
+        <div class="hist-info"><div class="hist-nome">${nome}</div><div class="hist-desc">${p.descricao||''} · ${p.pix_chave_destino||'—'}</div></div>
+        <div class="hist-right">
+          <div class="hist-val" style="color:${ok?'var(--gr)':'var(--rd)'}">R$ ${Number(p.valor).toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>
+          <div class="hist-data">${dt}</div>
+        </div>
+      </div>`
+    }).join('')
+  }catch(e){document.getElementById('hist-list').innerHTML=`<div class="empty"><p style="color:var(--rd)">Erro: ${e.message}</p></div>`}
+}
+document.getElementById('f-entrada').addEventListener('change',calcularProporcional)
+document.getElementById('f-salario').addEventListener('input',calcularProporcional)
+function calcularProporcional(){
+  const entrada=document.getElementById('f-entrada').value
+  const salario=parseFloat(document.getElementById('f-salario').value)
+  if(!entrada||!salario){document.getElementById('proporcional-preview').style.display='none';return}
+  const d=new Date(entrada+'T12:00:00')
+  const diasNoMes=new Date(d.getFullYear(),d.getMonth()+1,0).getDate()
+  const diasTrab=diasNoMes-d.getDate()+1
+  const prop=(salario/diasNoMes*diasTrab)
+  document.getElementById('prev-dias').textContent=diasTrab+' dias'
+  document.getElementById('prev-valor').textContent='R$ '+prop.toLocaleString('pt-BR',{minimumFractionDigits:2})
+  document.getElementById('prev-dia').textContent=`Todo dia ${d.getDate()} do mês`
+  document.getElementById('proporcional-preview').style.display='block'
+}
+async function salvarFuncionario(){
+  const nome=document.getElementById('f-nome').value.trim()
+  const salario=document.getElementById('f-salario').value
+  const entrada=document.getElementById('f-entrada').value
+  const pix_tipo=document.getElementById('f-pix-tipo').value
+  const pix_chave=document.getElementById('f-pix-chave').value.trim()
+  if(!nome||!salario||!entrada||!pix_chave){toast('Preencha todos os campos','error');return}
+  const btn=document.getElementById('btn-salvar-func')
+  btn.disabled=true;btn.textContent='Salvando...'
+  try{
+    await apiFetch('/api/funcionarios',{method:'POST',body:JSON.stringify({nome,salario:Number(salario),data_entrada:entrada,pix_tipo,pix_chave})})
+    toast(`${nome} cadastrado!`,'success')
+    closeModal('modal-add-func')
+    document.getElementById('f-nome').value=''
+    document.getElementById('f-salario').value=''
+    document.getElementById('f-entrada').value=''
+    document.getElementById('f-pix-chave').value=''
+    document.getElementById('proporcional-preview').style.display='none'
+    loadDashboard()
+  }catch(e){toast(e.message,'error')}
+  finally{btn.disabled=false;btn.textContent='Cadastrar'}
+}
+function abrirPagamento(id,nome,valor,pix_chave,pix_tipo){
+  const val_fmt='R$ '+Number(valor).toLocaleString('pt-BR',{minimumFractionDigits:2})
+  document.getElementById('mp-body').innerHTML=`
+    <div class="modal-title">Pagar ${nome}</div>
+    <div class="modal-sub">Ajuste o valor se necessário antes de gerar o Pix</div>
+    <div class="info-row"><span class="info-lbl">Funcionário</span><span class="info-val">${nome}</span></div>
+    <div class="info-row"><span class="info-lbl">Salário base</span><span class="info-val">${val_fmt}</span></div>
+    <div class="pix-box">
+      <div class="pix-icon"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
+      <div><div style="font-size:11px;color:var(--tx3);text-transform:uppercase;letter-spacing:.06em">Chave Pix (${pix_tipo})</div><div style="font-weight:500;margin-top:3px">${pix_chave}</div></div>
+    </div>
+    <div class="vale-box">
+      <label>Desconto de vale (opcional)</label>
+      <input type="number" id="inp-vale" placeholder="0.00" step="0.01" min="0" oninput="recalcularValor(${valor})"/>
+      <div class="vale-preview">
+        <span class="lbl">Valor final a pagar</span>
+        <span class="val-final" id="valor-final-preview">${val_fmt}</span>
+      </div>
+    </div>
+    <div class="valor-edit-box">
+      <label>Ou edite o valor manualmente</label>
+      <div class="valor-edit-row">
+        <span style="font-size:14px;color:var(--tx2)">R$</span>
+        <input type="number" id="inp-valor-final" value="${Number(valor).toFixed(2)}" step="0.01" min="0.01" oninput="atualizarPreview()"/>
+      </div>
+      <div class="valor-original" id="original-hint"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:4px">
+      <button class="btn btn-ghost" style="flex:1" onclick="closeModal('modal-pagar')">Cancelar</button>
+      <button class="btn btn-green" style="flex:2" id="btn-gerar-pix" onclick="gerarPix('${id}','${nome}',${valor},'${pix_chave}')">Gerar Pix Copia e Cola</button>
+    </div>`
+  openModal('modal-pagar')
+}
+function recalcularValor(valorBase){
+  const vale=parseFloat(document.getElementById('inp-vale').value)||0
+  const novo=Math.max(0,valorBase-vale)
+  document.getElementById('inp-valor-final').value=novo.toFixed(2)
+  document.getElementById('valor-final-preview').textContent='R$ '+novo.toLocaleString('pt-BR',{minimumFractionDigits:2})
+  if(vale>0){document.getElementById('original-hint').textContent=`Salário: R$ ${valorBase.toLocaleString('pt-BR',{minimumFractionDigits:2})} — vale: R$ ${vale.toLocaleString('pt-BR',{minimumFractionDigits:2})}`}
+  else{document.getElementById('original-hint').textContent=''}
+}
+function atualizarPreview(){
+  const v=parseFloat(document.getElementById('inp-valor-final').value)||0
+  document.getElementById('valor-final-preview').textContent='R$ '+v.toLocaleString('pt-BR',{minimumFractionDigits:2})
+}
+async function gerarPix(id,nome,valorOriginal,pix_chave){
+  const valorFinal=parseFloat(document.getElementById('inp-valor-final').value)
+  const vale=parseFloat(document.getElementById('inp-vale').value)||0
+  if(!valorFinal||valorFinal<=0){toast('Valor inválido','error');return}
+  const btn=document.getElementById('btn-gerar-pix')
+  btn.disabled=true;btn.textContent='Gerando Pix...'
+  try{
+    const res=await apiFetch('/api/pagamentos',{
+      method:'POST',
+      body:JSON.stringify({
+        funcionario_id:id,
+        valor:valorFinal,
+        valor_original:valorOriginal,
+        desconto:vale>0?vale:null,
+        descricao:`Salario ${nome}${vale>0?` (vale R$ ${vale.toFixed(2)})`:''}` 
+      })
+    })
+    closeModal('modal-pagar')
+    mostrarQRCode(res,nome,valorFinal,pix_chave)
+  }catch(e){
+    toast('Erro: '+e.message,'error')
+    btn.disabled=false;btn.textContent='Gerar Pix Copia e Cola'
+  }
+}
+function mostrarQRCode(res,nome,valor,pix_chave){
+  const val_fmt='R$ '+Number(valor).toLocaleString('pt-BR',{minimumFractionDigits:2})
+  const agora=new Date().toLocaleString('pt-BR')
+  const pixCode=res.pix_code||''
+  const pixQR=res.pix_qr_base64||''
+  document.getElementById('qr-body').innerHTML=`
+    <div class="comp-check"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
+    <div style="text-align:center;margin-bottom:4px;font-size:13px;color:var(--tx3)">Pix gerado para ${nome}</div>
+    <div class="comp-valor">${val_fmt}</div>
+    <div class="comp-data">Gerado em ${agora}</div>
+    <div class="qr-box">
+      ${pixQR?`<img class="qr-img" src="data:image/png;base64,${pixQR}" alt="QR Code Pix"/>`:`<div style="width:180px;height:180px;margin:0 auto 12px;background:var(--s3);border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--tx3);font-size:12px">Abra o app do banco e escaneie</div>`}
+      <div class="qr-label">Ou copie o código abaixo e cole no app do banco</div>
+      <div class="qr-code-text" id="pix-code-txt">${pixCode||'Código não disponível'}</div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:4px">
