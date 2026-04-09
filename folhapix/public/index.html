@@ -538,3 +538,32 @@ function mostrarQRCode(res,nome,valor,pix_chave){
       <div class="qr-code-text" id="pix-code-txt">${pixCode||'Código não disponível'}</div>
     </div>
     <div style="display:flex;gap:10px;margin-top:4px">
+      <button class="btn btn-ghost" style="flex:1" onclick="copiarPixCode()">Copiar código</button>
+      <button class="btn btn-green" style="flex:2" onclick="closeModal('modal-qr');loadDashboard()">Concluir</button>
+    </div>
+    <div style="font-size:11px;color:var(--tx3);text-align:center;margin-top:10px">Após pagar pelo seu banco, clique em Concluir</div>`
+  openModal('modal-qr')
+  toast(`Pix gerado para ${nome}!`,'success')
+}
+function copiarPixCode(){
+  const code=document.getElementById('pix-code-txt').textContent
+  navigator.clipboard.writeText(code).then(()=>toast('Código Pix copiado!','success'))
+}
+function openModal(id){document.getElementById(id).classList.add('open')}
+function closeModal(id){document.getElementById(id).classList.remove('open')}
+document.querySelectorAll('.overlay').forEach(o=>{o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open')})})
+function toast(msg,type='success'){
+  const wrap=document.getElementById('toasts')
+  const icon=type==='success'
+    ?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>'
+    :'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+  const el=document.createElement('div')
+  el.className=`toast ${type}`
+  el.innerHTML=icon+`<span>${msg}</span>`
+  wrap.appendChild(el)
+  setTimeout(()=>el.remove(),3500)
+}
+loadDashboard()
+</script>
+</body>
+</html>
