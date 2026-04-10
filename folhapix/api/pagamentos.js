@@ -25,7 +25,12 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST') {
-    const { funcionario_id, valor, descricao, valor_original, desconto } = req.body
+    const {
+      funcionario_id, valor, descricao,
+      valor_original, desconto,
+      mp_status, pix_code
+    } = req.body
+
     if (!funcionario_id || !valor) {
       return res.status(400).json({ erro: 'funcionario_id e valor são obrigatórios' })
     }
@@ -38,6 +43,36 @@ export default async function handler(req, res) {
 
     if (errFunc || !func) return res.status(404).json({ erro: 'Funcionário não encontrado' })
 
+    // Se for confirmação manual (Pix Estático escaneado pelo usuário)
+    if (mp_status === 'confirmed_manual') {
+      const obsDesconto = desconto ? ` (vale R$ ${Number(desconto).toFixed(2)})` : ''
+      const { data: pagamento, error: errPag } = await supabase
+        .from('pagamentos')
+        .insert([{
+          funcionario_id,
+          valor: Number(Number(valor).toFixed(2)),
+          descricao: (descricao || `Salario ${func.nome}`) + obsDesconto,
+          mp_payment_id: null,
+          mp_status: 'confirmed_manual',
+          pix_code: pix_code || null,
+          pix_chave_destino: func.pix_chave,
+          mes_referencia: new Date().toISOString().slice(0, 7),
+          criado_em: new Date().toISOString()
+        }])
+        .select()
+        .single()
+
+      if (errPag) return res.status(500).json({ erro: errPag.message })
+      return res.status(200).json({
+        ok: true,
+        status: 'confirmed_manual',
+        funcionario: func.nome,
+        valor: Number(valor),
+        comprovante_id: pagamento?.id
+      })
+    }
+
+    // Tentativa via API Mercado Pago (fallback)
     try {
       const mpRes = await fetch('https://api.mercadopago.com/v1/payments', {
         method: 'POST',
@@ -63,12 +98,9 @@ export default async function handler(req, res) {
       })
 
       const resultado = await mpRes.json()
-      if (!mpRes.ok) throw new Error(resultado.message || resultado.error || 'Erro no Mercado Pago')
+      if (!mpRes.ok) throw new Error(resultado.message || 'Erro no Mercado Pago')
 
-      const pixCode = resultado.point_of_interaction?.transaction_data?.qr_code || null
-      const pixQR = resultado.point_of_interaction?.transaction_data?.qr_code_base64 || null
-      const obsDesconto = desconto ? ` (vale R$ ${Number(desconto).toFixed(2)} descontado)` : ''
-
+      const obsDesconto = desconto ? ` (vale R$ ${Number(desconto).toFixed(2)})` : ''
       const { data: pagamento } = await supabase
         .from('pagamentos')
         .insert([{
@@ -77,7 +109,7 @@ export default async function handler(req, res) {
           descricao: (descricao || `Salario ${func.nome}`) + obsDesconto,
           mp_payment_id: String(resultado.id),
           mp_status: resultado.status,
-          pix_code: pixCode,
+          pix_code: resultado.point_of_interaction?.transaction_data?.qr_code || null,
           pix_chave_destino: func.pix_chave,
           mes_referencia: new Date().toISOString().slice(0, 7),
           criado_em: new Date().toISOString()
@@ -89,8 +121,6 @@ export default async function handler(req, res) {
         ok: true,
         pagamento_id: resultado.id,
         status: resultado.status,
-        pix_code: pixCode,
-        pix_qr_base64: pixQR,
         funcionario: func.nome,
         valor: Number(valor),
         comprovante_id: pagamento?.id
@@ -107,7 +137,7 @@ export default async function handler(req, res) {
         criado_em: new Date().toISOString(),
         erro_msg: err.message
       }])
-      return res.status(500).json({ erro: 'Erro ao gerar Pix', detalhe: err.message })
+      return res.status(500).json({ erro: 'Erro ao processar', detalhe: err.message })
     }
   }
 
