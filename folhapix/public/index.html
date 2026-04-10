@@ -174,7 +174,7 @@ select option{background:var(--s2)}
         </button>
       </div>
     </nav>
-    <div class="sb-footer"><p>FolhaPix v3.0 — Pix Estático</p></div>
+    <div class="sb-footer"><p>FolhaPix v3.1 — Pix Estático</p></div>
   </div>
   <div class="sb-overlay" id="sbOverlay" onclick="closeSidebar()"></div>
   <div class="main">
@@ -247,9 +247,9 @@ select option{background:var(--s2)}
     </div>
     <div class="form-row">
       <div class="form-group"><label>Tipo da chave Pix</label>
-        <select id="f-pix-tipo"><option value="celular">Celular</option><option value="cpf">CPF</option><option value="email">E-mail</option><option value="cnpj">CNPJ</option><option value="aleatoria">Chave aleatória</option></select>
+        <select id="f-pix-tipo"><option value="cpf">CPF</option><option value="celular">Celular</option><option value="email">E-mail</option><option value="cnpj">CNPJ</option><option value="aleatoria">Chave aleatória</option></select>
       </div>
-      <div class="form-group"><label>Chave Pix</label><input type="text" id="f-pix-chave" placeholder="(98) 99999-0001"/></div>
+      <div class="form-group"><label>Chave Pix</label><input type="text" id="f-pix-chave" placeholder="00000000000"/></div>
     </div>
     <div id="proporcional-preview" style="background:var(--s2);border:1px solid var(--br2);border-radius:var(--rs);padding:12px;margin-bottom:18px;display:none;font-size:13px">
       <div style="color:var(--tx3);margin-bottom:6px;font-size:11px;text-transform:uppercase;letter-spacing:.06em">Cálculo do 1º pagamento</div>
@@ -275,7 +275,7 @@ select option{background:var(--s2)}
     <div class="form-group"><label>Salário mensal (R$)</label><input type="number" id="e-salario" step="0.01"/></div>
     <div class="form-row">
       <div class="form-group"><label>Tipo da chave Pix</label>
-        <select id="e-pix-tipo"><option value="celular">Celular</option><option value="cpf">CPF</option><option value="email">E-mail</option><option value="cnpj">CNPJ</option><option value="aleatoria">Chave aleatória</option></select>
+        <select id="e-pix-tipo"><option value="cpf">CPF</option><option value="celular">Celular</option><option value="email">E-mail</option><option value="cnpj">CNPJ</option><option value="aleatoria">Chave aleatória</option></select>
       </div>
       <div class="form-group"><label>Chave Pix</label><input type="text" id="e-pix-chave"/></div>
     </div>
@@ -292,12 +292,12 @@ select option{background:var(--s2)}
   <div class="modal"><div class="modal-handle"></div><div id="mp-body"></div></div>
 </div>
 
-<!-- MODAL: QR CODE PIX ESTÁTICO -->
+<!-- MODAL: QR CODE -->
 <div class="overlay" id="modal-qr">
   <div class="modal"><div class="modal-handle"></div><div id="qr-body"></div></div>
 </div>
 
-<!-- MODAL: CONFIRMAR PAGO -->
+<!-- MODAL: COMPROVANTE -->
 <div class="overlay" id="modal-confirmar">
   <div class="modal"><div class="modal-handle"></div><div id="conf-body"></div></div>
 </div>
@@ -331,38 +331,65 @@ async function apiFetch(path,opts={}){
 }
 
 // =============================================
-// GERADOR DE PIX ESTÁTICO (BR Code)
+// PIX ESTÁTICO — BR Code oficial BACEN
 // =============================================
-function gerarPixEstatico(chave, valor, nome, cidade){
-  function campo(id, val){
-    const len = val.length.toString().padStart(2,'0')
-    return id + len + val
+function normalizarChave(chave, tipo) {
+  chave = chave.trim()
+  if (tipo === 'cpf' || tipo === 'cnpj') {
+    return chave.replace(/\D/g, '')
   }
-  function crc16(str){
-    let crc = 0xFFFF
-    for(let i=0;i<str.length;i++){
-      crc ^= str.charCodeAt(i) << 8
-      for(let j=0;j<8;j++) crc = (crc & 0x8000) ? (crc<<1)^0x1021 : crc<<1
-    }
-    return ((crc & 0xFFFF).toString(16).toUpperCase().padStart(4,'0'))
+  if (tipo === 'celular') {
+    let n = chave.replace(/\D/g, '')
+    if (n.length === 11) return '+55' + n
+    if (n.length === 10) return '+55' + n
+    if (n.startsWith('55') && n.length === 13) return '+' + n
+    return '+55' + n
+  }
+  if (tipo === 'email') return chave.toLowerCase()
+  return chave // aleatoria: sem alteração
+}
+
+function gerarPixEstatico(chave, tipo, valor, nome, cidade) {
+  const chaveNorm = normalizarChave(chave, tipo)
+
+  function f(id, val) {
+    return id + val.length.toString().padStart(2,'0') + val
   }
 
-  const pixKey = campo('01', chave)
-  const merchant = campo('26', campo('00','BR.GOV.BCB.PIX') + campo('01', pixKey))
-  const valorStr = valor > 0 ? campo('54', valor.toFixed(2)) : ''
-  const nomeClean = nome.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9 ]/g,'').slice(0,25).trim()
-  const cidadeClean = (cidade||'SAO PAULO').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9 ]/g,'').slice(0,15).trim()
+  function crc16(s) {
+    let c = 0xFFFF
+    for (let i = 0; i < s.length; i++) {
+      c ^= s.charCodeAt(i) << 8
+      for (let j = 0; j < 8; j++) c = (c & 0x8000) ? (c<<1)^0x1021 : c<<1
+    }
+    return (c & 0xFFFF).toString(16).toUpperCase().padStart(4,'0')
+  }
+
+  const nomeClean = nome
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^a-zA-Z0-9 ]/g,'')
+    .slice(0,25).trim() || 'FUNCIONARIO'
+
+  const cidadeClean = (cidade||'SAO PAULO')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^a-zA-Z0-9 ]/g,'')
+    .slice(0,15).trim()
+
+  const merchantAccount = f('26',
+    f('00','BR.GOV.BCB.PIX') +
+    f('01', chaveNorm)
+  )
 
   const payload =
-    campo('00','01') +
-    merchant +
-    campo('52','0000') +
-    campo('53','986') +
-    valorStr +
-    campo('58','BR') +
-    campo('59', nomeClean) +
-    campo('60', cidadeClean) +
-    campo('62', campo('05','***')) +
+    f('00','01') +
+    merchantAccount +
+    f('52','0000') +
+    f('53','986') +
+    (valor > 0 ? f('54', valor.toFixed(2)) : '') +
+    f('58','BR') +
+    f('59', nomeClean) +
+    f('60', cidadeClean) +
+    f('62', f('05','***')) +
     '6304'
 
   return payload + crc16(payload)
@@ -585,7 +612,7 @@ function abrirPagamento(id,nome,valor,pix_chave,pix_tipo){
     </div>
     <div style="display:flex;gap:10px;margin-top:4px">
       <button class="btn btn-ghost" style="flex:1" onclick="closeModal('modal-pagar')">Cancelar</button>
-      <button class="btn btn-green" style="flex:2" onclick="mostrarQR('${id}','${nome}','${pix_chave}',${valor})">Gerar QR Code Pix</button>
+      <button class="btn btn-green" style="flex:2" onclick="mostrarQR('${id}','${nome}','${pix_chave}','${pix_tipo}',${valor})">Gerar QR Code Pix</button>
     </div>`
   openModal('modal-pagar')
 }
@@ -602,16 +629,15 @@ function atualizarPreview(){
   document.getElementById('valor-final-preview').textContent='R$ '+v.toLocaleString('pt-BR',{minimumFractionDigits:2})
 }
 
-function mostrarQR(id,nome,pix_chave,valorOriginal){
+function mostrarQR(id,nome,pix_chave,pix_tipo,valorOriginal){
   const valorFinal=parseFloat(document.getElementById('inp-valor-final').value)
   const vale=parseFloat(document.getElementById('inp-vale').value)||0
   if(!valorFinal||valorFinal<=0){toast('Valor inválido','error');return}
 
-  const pixCode=gerarPixEstatico(pix_chave, valorFinal, nome, 'SAO PAULO')
+  const pixCode=gerarPixEstatico(pix_chave, pix_tipo, valorFinal, nome, 'SAO PAULO')
   const val_fmt='R$ '+valorFinal.toLocaleString('pt-BR',{minimumFractionDigits:2})
 
-  pagamentoAtual={id, nome, valor:valorFinal, valorOriginal, vale, pix_chave, pixCode}
-
+  pagamentoAtual={id,nome,valor:valorFinal,valorOriginal,vale,pix_chave,pix_tipo,pixCode}
   closeModal('modal-pagar')
 
   document.getElementById('qr-body').innerHTML=`
@@ -619,28 +645,28 @@ function mostrarQR(id,nome,pix_chave,valorOriginal){
     <div class="modal-sub" style="text-align:center">Escaneie pelo Mercado Pago ou qualquer banco</div>
     <div style="text-align:center;margin-bottom:8px">
       <span style="font-family:'Syne',sans-serif;font-size:26px;font-weight:700;color:var(--gr)">${val_fmt}</span><br/>
-      <span style="font-size:13px;color:var(--tx3)">Para: ${nome}</span>
+      <span style="font-size:13px;color:var(--tx3)">Para: ${nome} · CPF/Chave: ${pix_chave}</span>
     </div>
     <div class="qr-wrap" id="qr-container"></div>
     <div class="qr-instrucao">
       Abra o <strong>Mercado Pago</strong> → Pagar → Ler QR Code<br/>
-      Ou copie o código abaixo e use Pix Copia e Cola
+      Ou copie o código abaixo → Pix Copia e Cola
     </div>
     <div class="pix-copia-box" id="pix-txt">${pixCode}</div>
     <div style="display:flex;gap:10px;margin-top:16px">
       <button class="btn btn-ghost btn-sm" style="flex:1" onclick="copiarPix()">Copiar código</button>
       <button class="btn btn-green" style="flex:2" onclick="confirmarPagamento()">Já paguei — confirmar</button>
     </div>
-    <div style="font-size:11px;color:var(--tx3);text-align:center;margin-top:10px">Clique em "Já paguei" após confirmar o pagamento no banco</div>`
+    <div style="font-size:11px;color:var(--tx3);text-align:center;margin-top:10px">Clique em "Já paguei" após realizar o pagamento</div>`
 
   openModal('modal-qr')
 
   setTimeout(()=>{
-    const container=document.getElementById('qr-container')
-    if(container){
-      new QRCode(container,{text:pixCode,width:200,height:200,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.M})
+    const el=document.getElementById('qr-container')
+    if(el && typeof QRCode !== 'undefined'){
+      new QRCode(el,{text:pixCode,width:200,height:200,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.M})
     }
-  },100)
+  },200)
 }
 
 function copiarPix(){
@@ -654,7 +680,6 @@ async function confirmarPagamento(){
   const {id,nome,valor,valorOriginal,vale,pix_chave,pixCode}=pagamentoAtual
   const val_fmt='R$ '+valor.toLocaleString('pt-BR',{minimumFractionDigits:2})
   const agora=new Date().toLocaleString('pt-BR')
-
   try{
     await apiFetch('/api/pagamentos',{
       method:'POST',
@@ -668,7 +693,6 @@ async function confirmarPagamento(){
         pix_code:pixCode
       })
     })
-
     document.getElementById('conf-body').innerHTML=`
       <div class="comp-check"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
       <div class="comp-valor">${val_fmt}</div>
@@ -680,13 +704,10 @@ async function confirmarPagamento(){
       <div class="info-row"><span class="info-lbl">Status</span><span class="info-val" style="color:var(--gr)">Pago e registrado</span></div>
       <div class="dashed-div"></div>
       <button class="btn btn-green" style="width:100%" onclick="closeModal('modal-confirmar');loadDashboard()">Concluir</button>`
-
     openModal('modal-confirmar')
     toast(`Pagamento de ${nome} registrado!`,'success')
     pagamentoAtual=null
-  }catch(e){
-    toast('Erro ao registrar: '+e.message,'error')
-  }
+  }catch(e){toast('Erro ao registrar: '+e.message,'error')}
 }
 
 function openModal(id){document.getElementById(id).classList.add('open')}
